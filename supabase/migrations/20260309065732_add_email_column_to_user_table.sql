@@ -1,0 +1,1 @@
+ALTER TABLE public.users ADD COLUMN email VARCHAR(100) NOT NULL;
