@@ -15,8 +15,9 @@ app.get("/", (req, res) => {
   console.log("Response sent");
 });
 
+const isProd = process.env.NODE_ENV === "production";
 const swaggerOptions = {
-  apis: ["./src/routes/*.ts"],
+  apis: [isProd ? "./dist/src/routes/*.js" : "./src/routes/*.ts"],
   swaggerDefinition: {
     info: {
       description: "Control Park Swagger API Docs",

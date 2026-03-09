@@ -28,6 +28,9 @@
       "prettier --check"
     ]
   },
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "keywords": [],
   "author": "Control Park Team",
