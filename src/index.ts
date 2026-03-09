@@ -1,5 +1,6 @@
 import "dotenv/config";
 import authRouter from "#routes/auth.js";
+import cors from "cors";
 import express from "express";
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
@@ -7,6 +8,7 @@ import swaggerUi from "swagger-ui-express";
 const app = express();
 const port = process.env.PORT ?? "9001";
 
+app.use(cors({ origin: process.env.CORS_ORIGIN ?? "*" }));
 app.use(express.json());
 app.use("/auth", authRouter);
 
