@@ -263,4 +263,112 @@ router.post("/signin", async (req, res) => {
   res.status(200).json({ access_token: data.session.access_token, user_id: data.user.id });
 });
 
+/**
+ * @swagger
+ * /auth/forgot-password:
+ *   post:
+ *     summary: Request a password reset OTP
+ *     description: Sends a 6-digit OTP code to the user's email via Supabase. The OTP is valid for a limited time.
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *     responses:
+ *       200:
+ *         description: OTP sent (response is intentionally vague for security)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *       400:
+ *         description: Missing email field
+ */
+router.post("/forgot-password", async (req, res) => {
+  const { email } = req.body as { email?: string };
+
+  if (!email) {
+    res.status(400).json({ error: "Missing email field" });
+    return;
+  }
+
+  await supabase.auth.resetPasswordForEmail(email);
+
+  // Always return 200 to avoid leaking whether an account exists
+  res.status(200).json({ message: "If an account with that email exists, a password reset code has been sent." });
+});
+
+/**
+ * @swagger
+ * /auth/reset-password:
+ *   post:
+ *     summary: Reset password using a 6-digit OTP
+ *     description: Verifies the OTP sent to the user's email and updates their password.
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, otp, new_password]
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               otp:
+ *                 type: string
+ *                 description: The 6-digit OTP code received via email
+ *                 example: "123456"
+ *               new_password:
+ *                 type: string
+ *                 format: password
+ *     responses:
+ *       200:
+ *         description: Password updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *       400:
+ *         description: Missing required fields or invalid/expired OTP
+ */
+router.post("/reset-password", async (req, res) => {
+  const { email, new_password, otp } = req.body as { email?: string; new_password?: string; otp?: string };
+
+  if (!email || !otp || !new_password) {
+    res.status(400).json({ error: "Missing required fields: email, otp, and new_password" });
+    return;
+  }
+
+  const { data, error: verifyError } = await supabase.auth.verifyOtp({ email, token: otp, type: "recovery" });
+
+  if (verifyError || !data.user) {
+    res.status(400).json({ error: "Invalid or expired OTP" });
+    return;
+  }
+
+  const { error } = await supabase.auth.admin.updateUserById(data.user.id, { password: new_password });
+
+  if (error) {
+    res.status(400).json({ error: error.message });
+    return;
+  }
+
+  res.status(200).json({ message: "Password updated successfully." });
+});
+
 export default router;
