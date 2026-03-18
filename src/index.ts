@@ -1,5 +1,7 @@
 import "dotenv/config";
 import authRouter from "#routes/auth.js";
+import listingsRouter from "#routes/listings.js";
+import reservationsRouter from "#routes/reservations.js";
 import cors from "cors";
 import express from "express";
 import swaggerJsdoc from "swagger-jsdoc";
@@ -11,6 +13,8 @@ const port = process.env.PORT ?? "9001";
 app.use(cors({ origin: process.env.CORS_ORIGIN ?? "*" }));
 app.use(express.json());
 app.use("/auth", authRouter);
+app.use("/listings", listingsRouter);
+app.use("/reservations", reservationsRouter);
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
