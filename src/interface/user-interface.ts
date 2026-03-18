@@ -1,6 +1,7 @@
 import { UserRole } from "#enum/user-role.js";
 
-import { Listing } from "./listings-interface.js";
+import { IListing } from "./listings-interface.js";
+import { IReservation } from "./reservation-interface.js";
 
 export interface IUser {
   birth_date: Date;
@@ -10,9 +11,10 @@ export interface IUser {
   host_display_name?: string;
   id: string;
   last_name: string;
-  listings: Listing[];
+  listings: IListing[];
   phone: string;
   preferred_name?: string;
+  reservations: IReservation[];
   role: UserRole;
   updated_at: Date;
 }
