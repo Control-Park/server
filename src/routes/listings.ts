@@ -83,6 +83,34 @@ const router = Router();
 /**
  * @swagger
  * /listings:
+ *   get:
+ *     summary: Get all listings
+ *     description: Returns all listings.
+ *     tags: [Listings]
+ *     responses:
+ *       200:
+ *         description: Get all listings successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Listing'
+ *       404:
+ *         description: Listing not found
+ */
+router.get("/", async (req, res) => {
+  const { data: listings, error } = await supabase.from("listings").select("*");
+
+  if (error) {
+    res.status(404).json({ error: "Unable to fetch listings" });
+    return;
+  }
+
+  res.status(200).json({ listings });
+});
+
+/**
+ * @swagger
+ * /listings:
  *   post:
  *     summary: Create a new parking listing
  *     description: Creates a parking listing owned by the authenticated user. Images are stored as file path strings.
