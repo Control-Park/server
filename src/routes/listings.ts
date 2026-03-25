@@ -67,6 +67,32 @@ const router = Router();
  *           type: array
  *           items:
  *             type: string
+ *         sub_heading:
+ *           type: array
+ *           items:
+ *             type: string
+ *         is_guest_favorite:
+ *           type: boolean
+ *         is_popular:
+ *           type: boolean
+ *         original_price:
+ *           type: number
+ *           format: float
+ *           nullable: true
+ *         rating:
+ *           type: number
+ *           format: float
+ *           nullable: true
+ *           minimum: 0
+ *           maximum: 5
+ *         review_count:
+ *           type: integer
+ *         host_name:
+ *           type: string
+ *           nullable: true
+ *         host_type:
+ *           type: string
+ *           nullable: true
  *         is_active:
  *           type: boolean
  *         is_saved:
@@ -162,6 +188,28 @@ router.get("/", async (req, res) => {
  *               available_until:
  *                 type: string
  *                 format: date-time
+ *               sub_heading:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               is_guest_favorite:
+ *                 type: boolean
+ *               is_popular:
+ *                 type: boolean
+ *               original_price:
+ *                 type: number
+ *                 format: float
+ *               rating:
+ *                 type: number
+ *                 format: float
+ *                 minimum: 0
+ *                 maximum: 5
+ *               review_count:
+ *                 type: integer
+ *               host_name:
+ *                 type: string
+ *               host_type:
+ *                 type: string
  *     responses:
  *       201:
  *         description: Listing created successfully
@@ -175,18 +223,26 @@ router.get("/", async (req, res) => {
  *         description: Unauthorized
  */
 router.post("/", requireAuth, async (req, res) => {
-  const { address, amenities, available_from, available_until, description, images, incentives, parking_type, perks, price_per_hour, structure_name, title } = req.body as {
+  const { address, amenities, available_from, available_until, description, host_name, host_type, images, incentives, is_guest_favorite, is_popular, original_price, parking_type, perks, price_per_hour, rating, review_count, structure_name, sub_heading, title } = req.body as {
     address?: string;
     amenities?: string[];
     available_from?: string;
     available_until?: string;
     description?: string;
+    host_name?: string;
+    host_type?: string;
     images?: string[];
     incentives?: string[];
+    is_guest_favorite?: boolean;
+    is_popular?: boolean;
+    original_price?: number;
     parking_type?: string;
     perks?: string[];
     price_per_hour?: number;
+    rating?: number;
+    review_count?: number;
     structure_name?: string;
+    sub_heading?: string[];
     title?: string;
   };
   const hostId = req.user!.id;
@@ -216,12 +272,20 @@ router.post("/", requireAuth, async (req, res) => {
       available_until: available_until ?? null,
       description,
       host_id: hostId,
+      host_name: host_name ?? null,
+      host_type: host_type ?? null,
       images: images ?? [],
       incentives: incentives ?? [],
+      is_guest_favorite: is_guest_favorite ?? false,
+      is_popular: is_popular ?? false,
+      original_price: original_price ?? null,
       parking_type,
       perks: perks ?? [],
       price_per_hour,
+      rating: rating ?? null,
+      review_count: review_count ?? 0,
       structure_name: structure_name ?? null,
+      sub_heading: sub_heading ?? [],
       title,
     })
     .select()
