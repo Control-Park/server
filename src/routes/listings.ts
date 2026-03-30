@@ -111,8 +111,35 @@ const router = Router();
  * /listings:
  *   get:
  *     summary: Get all listings
- *     description: Returns all listings.
+ *     description: Returns all active listings. Supports optional filtering by name, location, price range, and availability date.
  *     tags: [Listings]
+ *     parameters:
+ *       - in: query
+ *         name: name
+ *         schema:
+ *           type: string
+ *         description: Partial text match on title or structure_name
+ *       - in: query
+ *         name: location
+ *         schema:
+ *           type: string
+ *         description: Partial text match on address
+ *       - in: query
+ *         name: priceMin
+ *         schema:
+ *           type: number
+ *         description: Minimum price per hour (inclusive)
+ *       - in: query
+ *         name: priceMax
+ *         schema:
+ *           type: number
+ *         description: Maximum price per hour (inclusive)
+ *       - in: query
+ *         name: availability
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Date that must fall within available_from and available_until (ISO 8601)
  *     responses:
  *       200:
  *         description: Get all listings successful
@@ -120,14 +147,44 @@ const router = Router();
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Listing'
- *       404:
- *         description: Listing not found
+ *       500:
+ *         description: Unable to fetch listings
  */
 router.get("/", async (req, res) => {
-  const { data: listings, error } = await supabase.from("listings").select("*");
+  const { availability, location, name, priceMax, priceMin } = req.query as {
+    availability?: string;
+    location?: string;
+    name?: string;
+    priceMax?: string;
+    priceMin?: string;
+  };
+
+  let query = supabase.from("listings").select("*").eq("is_active", true);
+
+  if (name) {
+    query = query.or(`title.ilike.%${name}%,structure_name.ilike.%${name}%`);
+  }
+
+  if (location) {
+    query = query.ilike("address", `%${location}%`);
+  }
+
+  if (priceMin !== undefined) {
+    query = query.gte("price_per_hour", Number(priceMin));
+  }
+
+  if (priceMax !== undefined) {
+    query = query.lte("price_per_hour", Number(priceMax));
+  }
+
+  if (availability) {
+    query = query.lte("available_from", availability).gte("available_until", availability);
+  }
+
+  const { data: listings, error } = await query;
 
   if (error) {
-    res.status(404).json({ error: "Unable to fetch listings" });
+    res.status(500).json({ error: "Unable to fetch listings" });
     return;
   }
 
