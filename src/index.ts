@@ -1,6 +1,7 @@
 import "dotenv/config";
 import authRouter from "#routes/auth.js";
 import listingsRouter from "#routes/listings.js";
+import notificationsRouter from "#routes/notifications.js";
 import reservationsRouter from "#routes/reservations.js";
 import cors from "cors";
 import express from "express";
@@ -14,6 +15,7 @@ app.use(cors({ origin: process.env.CORS_ORIGIN ?? "*" }));
 app.use(express.json());
 app.use("/auth", authRouter);
 app.use("/listings", listingsRouter);
+app.use("/notifications", notificationsRouter);
 app.use("/reservations", reservationsRouter);
 
 app.get("/", (req, res) => {
