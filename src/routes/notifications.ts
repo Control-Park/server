@@ -59,6 +59,95 @@ const router = Router();
  *           format: date-time
  */
 
+const VALID_TYPES = ["new_listing", "new_message", "parking_alert", "reservation_reminder"];
+
+/**
+ * @swagger
+ * /notifications:
+ *   post:
+ *     summary: Push a notification to a user
+ *     description: Creates a notification for the specified user if their settings permit it. Respects both the master toggle and the per-type toggle.
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [user_id, title, body, type]
+ *             properties:
+ *               user_id:
+ *                 type: string
+ *                 format: uuid
+ *                 description: The recipient's user ID
+ *               title:
+ *                 type: string
+ *               body:
+ *                 type: string
+ *               type:
+ *                 type: string
+ *                 enum: [new_listing, new_message, parking_alert, reservation_reminder]
+ *     responses:
+ *       201:
+ *         description: Notification created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Notification'
+ *       200:
+ *         description: Notification suppressed by user settings
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *       400:
+ *         description: Missing or invalid fields
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Recipient user not found
+ */
+router.post("/", requireAuth, async (req, res) => {
+  const { body, title, type, user_id } = req.body as {
+    body?: string;
+    title?: string;
+    type?: string;
+    user_id?: string;
+  };
+
+  if (!user_id || !title || !body || !type) {
+    res.status(400).json({ error: "Missing required fields: user_id, title, body, type" });
+    return;
+  }
+
+  if (!VALID_TYPES.includes(type)) {
+    res.status(400).json({ error: `Invalid type. Must be one of: ${VALID_TYPES.join(", ")}` });
+    return;
+  }
+
+  const supabaseUrl = process.env.NODE_ENV === "development" ? "http://127.0.0.1:54321" : process.env.SUPABASE_URL!;
+
+  // Forward the caller's user JWT so the Edge Function can verify it with Supabase auth
+  const callerToken = req.headers.authorization!;
+
+  const edgeRes = await fetch(`${supabaseUrl}/functions/v1/send-notification`, {
+    body: JSON.stringify({ body, title, type, user_id }),
+    headers: {
+      Authorization: callerToken,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  const data = await edgeRes.json();
+  res.status(edgeRes.status).json(data);
+});
+
 /**
  * @swagger
  * /notifications:

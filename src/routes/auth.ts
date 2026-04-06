@@ -1,8 +1,10 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
 import type { PostgrestSingleResponse } from "@supabase/supabase-js";
 
 import { supabase } from "#database/supabase.js";
 import { IUser } from "#interface/user-interface.js";
 import { UserRegistration } from "#interface/user-registration-interface.js";
+import { requireAuth } from "#middleware/auth.js";
 import { Router } from "express";
 
 const router = Router();
@@ -369,6 +371,50 @@ router.post("/reset-password", async (req, res) => {
   }
 
   res.status(200).json({ message: "Password updated successfully." });
+});
+
+/**
+ * @swagger
+ * /auth/push-token:
+ *   post:
+ *     summary: Register or update the authenticated user's Expo push token
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [expo_push_token]
+ *             properties:
+ *               expo_push_token:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Push token saved successfully
+ *       400:
+ *         description: Missing expo_push_token
+ *       401:
+ *         description: Unauthorized
+ */
+router.post("/push-token", requireAuth, async (req, res) => {
+  const { expo_push_token } = req.body as { expo_push_token?: string };
+
+  if (!expo_push_token) {
+    res.status(400).json({ error: "Missing expo_push_token" });
+    return;
+  }
+
+  const { error } = await supabase.from("users").update({ expo_push_token }).eq("id", req.user!.id);
+
+  if (error) {
+    res.status(500).json({ error: "Failed to save push token" });
+    return;
+  }
+
+  res.status(200).json({ message: "Push token saved successfully" });
 });
 
 export default router;
