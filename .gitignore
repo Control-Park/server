@@ -8,3 +8,4 @@ node_modules
 /dist
 
 .DS_Store
+supabase/functions/send-notification/index.ts

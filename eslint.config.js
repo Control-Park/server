@@ -6,7 +6,7 @@ import perfectionist from "eslint-plugin-perfectionist";
 
 export default tseslint.config(
   {
-    ignores: ["**/*.js"],
+    ignores: ["**/*.js", "supabase/functions/send-notification/index.ts"],
   },
   eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,
