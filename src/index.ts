@@ -1,12 +1,17 @@
 import "dotenv/config";
+import { supabase } from "#database/supabase.js";
 import authRouter from "#routes/auth.js";
 import listingsRouter from "#routes/listings.js";
 import notificationsRouter from "#routes/notifications.js";
 import reservationsRouter from "#routes/reservations.js";
+import { registerClient, removeClient } from "#websocket/wsManager.js";
 import cors from "cors";
 import express from "express";
+import { createServer } from "http";
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
+import { URL } from "url";
+import { WebSocketServer } from "ws";
 
 const app = express();
 const port = process.env.PORT ?? "9001";
@@ -39,6 +44,35 @@ const swaggerOptions = {
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-app.listen(port, () => {
-  console.log(`Test listening on port ${port}`);
+// Wrap Express with an HTTP server so WebSocket can share the same port
+const server = createServer(app);
+const wss = new WebSocketServer({ server });
+
+wss.on("connection", (ws, req) => {
+  void (async () => {
+    const reqUrl = new URL(req.url ?? "", `http://localhost:${port}`);
+    const token = reqUrl.searchParams.get("token");
+
+    if (!token) {
+      ws.close(4001, "Missing token");
+      return;
+    }
+
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error) {
+      ws.close(4001, "Unauthorized");
+      return;
+    }
+
+    const userId = data.user.id;
+    registerClient(userId, ws);
+
+    ws.on("close", () => {
+      removeClient(userId, ws);
+    });
+  })();
+});
+
+server.listen(port, () => {
+  console.log(`Listening on port ${port}`);
 });

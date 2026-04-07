@@ -3,6 +3,7 @@
 import { supabase } from "#database/supabase.js";
 import { INotification, INotificationSettings } from "#interface/notification-interface.js";
 import { requireAuth } from "#middleware/auth.js";
+import { sendToUser } from "#websocket/wsManager.js";
 import { Router } from "express";
 
 const router = Router();
@@ -145,6 +146,12 @@ router.post("/", requireAuth, async (req, res) => {
   });
 
   const data = await edgeRes.json();
+
+  // Push to any connected WebSocket sessions for this user
+  if (edgeRes.status === 201) {
+    sendToUser(user_id, { body, title, type });
+  }
+
   res.status(edgeRes.status).json(data);
 });
 
