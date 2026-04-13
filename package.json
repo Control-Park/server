@@ -40,6 +40,7 @@
     "@supabase/supabase-js": "^2.98.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "stripe": "^22.0.1",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-dist": "^5.32.0",
     "swagger-ui-express": "^5.0.1",

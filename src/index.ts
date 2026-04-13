@@ -3,6 +3,7 @@ import { supabase } from "#database/supabase.js";
 import authRouter from "#routes/auth.js";
 import listingsRouter from "#routes/listings.js";
 import notificationsRouter from "#routes/notifications.js";
+import paymentsRouter from "#routes/payments.js";
 import reservationsRouter from "#routes/reservations.js";
 import { registerClient, removeClient } from "#websocket/wsManager.js";
 import cors from "cors";
@@ -21,6 +22,7 @@ app.use(express.json());
 app.use("/auth", authRouter);
 app.use("/listings", listingsRouter);
 app.use("/notifications", notificationsRouter);
+app.use("/payments", paymentsRouter);
 app.use("/reservations", reservationsRouter);
 
 app.get("/", (req, res) => {
