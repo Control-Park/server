@@ -1,6 +1,18 @@
 import type { NextFunction, Request, Response } from "express";
 
-import { supabase } from "#database/supabase.js";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("Missing SUPABASE_URL or SUPABASE_ANON_KEY in .env");
+}
+
+// Use anon key for JWT verification — service role client does not support getUser(jwt)
+const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { autoRefreshToken: false, persistSession: false },
+});
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
@@ -11,10 +23,15 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 
   const token = authHeader.slice(7);
-  const { data, error } = await supabase.auth.getUser(token);
+
+  if (!token) {
+    res.status(401).json({ error: "Missing token" });
+    return;
+  }
+
+  const { data, error } = await authClient.auth.getUser(token);
 
   if (error) {
-    console.error("[requireAuth] supabase.auth.getUser error:", error);
     res.status(401).json({ error: "Invalid or expired token" });
     return;
   }
