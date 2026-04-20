@@ -2,6 +2,7 @@ import "dotenv/config";
 import { supabase } from "#database/supabase.js";
 import authRouter from "#routes/auth.js";
 import listingsRouter from "#routes/listings.js";
+import messagesRouter from "#routes/messages.js";
 import notificationsRouter from "#routes/notifications.js";
 import paymentsRouter from "#routes/payments.js";
 import reservationsRouter from "#routes/reservations.js";
@@ -23,6 +24,7 @@ app.use("/auth", authRouter);
 app.use("/listings", listingsRouter);
 app.use("/notifications", notificationsRouter);
 app.use("/payments", paymentsRouter);
+app.use("/conversations", messagesRouter);
 app.use("/reservations", reservationsRouter);
 
 app.get("/", (req, res) => {
