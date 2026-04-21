@@ -6,6 +6,7 @@ import messagesRouter from "#routes/messages.js";
 import notificationsRouter from "#routes/notifications.js";
 import paymentsRouter from "#routes/payments.js";
 import reservationsRouter from "#routes/reservations.js";
+import vehiclesRouter from "#routes/vehicles.js";
 import { registerClient, removeClient } from "#websocket/wsManager.js";
 import cors from "cors";
 import express from "express";
@@ -26,6 +27,7 @@ app.use("/notifications", notificationsRouter);
 app.use("/payments", paymentsRouter);
 app.use("/conversations", messagesRouter);
 app.use("/reservations", reservationsRouter);
+app.use("/vehicles", vehiclesRouter);
 
 app.get("/", (req, res) => {
   res.send("Hello World!");

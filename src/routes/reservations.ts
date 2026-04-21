@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-enum-comparison */
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
@@ -11,10 +10,12 @@ import { IListing } from "#interface/listings-interface.js";
 import { IReservation } from "#interface/reservation-interface.js";
 import { requireAuth } from "#middleware/auth.js";
 import { Router } from "express";
+import Stripe from "stripe";
 
 const router = Router();
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
-function computeStatus(startTime: string, endTime: string): ReservationStatus {
+function computeTimeStatus(startTime: string, endTime: string): ReservationStatus {
   const now = new Date();
   const start = new Date(startTime);
   const end = new Date(endTime);
@@ -24,81 +25,30 @@ function computeStatus(startTime: string, endTime: string): ReservationStatus {
   return ReservationStatus.Expired;
 }
 
-/**
- * @swagger
- * components:
- *   schemas:
- *     Reservation:
- *       type: object
- *       properties:
- *         id:
- *           type: string
- *           format: uuid
- *         user_id:
- *           type: string
- *           format: uuid
- *         listing_id:
- *           type: string
- *           format: uuid
- *         vehicle_id:
- *           type: string
- *           format: uuid
- *           nullable: true
- *         start_time:
- *           type: string
- *           format: date-time
- *         end_time:
- *           type: string
- *           format: date-time
- *         total_price:
- *           type: number
- *           format: float
- *         status:
- *           type: string
- *           enum: [upcoming, active, expired]
- *           description: Computed server-side from current time vs reservation window
- *         listing:
- *           $ref: '#/components/schemas/Listing'
- *         created_at:
- *           type: string
- *           format: date-time
- *         updated_at:
- *           type: string
- *           format: date-time
- */
+function enrichReservation(row: IReservation): IReservation {
+  // For approved reservations, compute time-based status; otherwise surface the approval status
+  const timeStatus = computeTimeStatus(row.start_time, row.end_time);
+  const status = row.approval_status === "approved" ? timeStatus : (row.approval_status as unknown as ReservationStatus);
+  return { ...row, status };
+}
 
-/**
- * @swagger
- * /reservations:
- *   get:
- *     summary: Get all reservations for the authenticated user
- *     description: Returns all reservations belonging to the authenticated user. Status is computed server-side based on current time vs reservation window.
- *     tags: [Reservations]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         required: false
- *         schema:
- *           type: string
- *           enum: [upcoming, active, expired]
- *         description: Filter reservations by status
- *     responses:
- *       200:
- *         description: List of reservations
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Reservation'
- *       401:
- *         description: Unauthorized
- */
+// ─── Public: booked ranges for a listing ─────────────────────────────────────
+router.get("/listing/:listingId/booked", requireAuth, async (req, res) => {
+  const { listingId } = req.params;
+
+  const { data, error } = await supabase.from("reservations").select("start_time, end_time").eq("listing_id", listingId).in("approval_status", ["approved", "pending"]);
+
+  if (error) {
+    res.status(500).json({ error: "Failed to fetch booked ranges" });
+    return;
+  }
+
+  res.status(200).json(data ?? []);
+});
+
+// ─── Guest: list own reservations ────────────────────────────────────────────
 router.get("/", requireAuth, async (req, res) => {
   const userId = req.user!.id;
-  const { status } = req.query as { status?: string };
 
   const { data, error } = await supabase.from("reservations").select("*, listing:listings(*)").eq("user_id", userId).order("start_time", { ascending: false });
 
@@ -107,47 +57,46 @@ router.get("/", requireAuth, async (req, res) => {
     return;
   }
 
-  let reservations = (data ?? []).map((row) => ({
-    ...(row as IReservation),
-    status: computeStatus(row.start_time as string, row.end_time as string),
-  }));
+  const reservations = (data ?? []).map((row) => enrichReservation(row as IReservation));
+  res.status(200).json(reservations);
+});
 
-  if (status) {
-    reservations = reservations.filter((r) => r.status === status);
+// ─── Host: list incoming reservation requests for own listings ───────────────
+router.get("/hosting", requireAuth, async (req, res) => {
+  const userId = req.user!.id;
+
+  // Fetch all listing ids owned by this user
+  const { data: listings } = await supabase.from("listings").select("id").eq("host_id", userId);
+
+  if (!listings || listings.length === 0) {
+    res.status(200).json([]);
+    return;
   }
+
+  const listingIds = listings.map((l) => l.id as string);
+
+  const { data, error } = await supabase.from("reservations").select("*, listing:listings(*)").in("listing_id", listingIds).order("created_at", { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: "Failed to fetch hosting reservations" });
+    return;
+  }
+
+  // Enrich with guest info
+  const guestIds = [...new Set((data ?? []).map((r) => r.user_id as string))];
+  const { data: guests } = await supabase.from("users").select("id, first_name, last_name, email").in("id", guestIds);
+
+  const guestMap = new Map((guests ?? []).map((g) => [g.id, g]));
+
+  const reservations = (data ?? []).map((row) => ({
+    ...enrichReservation(row as IReservation),
+    guest: guestMap.get(row.user_id as string) ?? null,
+  }));
 
   res.status(200).json(reservations);
 });
 
-/**
- * @swagger
- * /reservations/{id}:
- *   get:
- *     summary: Get reservation details by ID
- *     description: Returns detailed information for a single reservation including listing info and computed status.
- *     tags: [Reservations]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: The reservation UUID
- *     responses:
- *       200:
- *         description: Reservation found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Reservation'
- *       401:
- *         description: Unauthorized
- *       404:
- *         description: Reservation not found
- */
+// ─── Get single reservation ───────────────────────────────────────────────────
 router.get("/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
   const userId = req.user!.id;
@@ -159,60 +108,15 @@ router.get("/:id", requireAuth, async (req, res) => {
     return;
   }
 
-  res.status(200).json({
-    ...data,
-    status: computeStatus(data.start_time, data.end_time),
-  });
+  res.status(200).json(enrichReservation(data));
 });
 
-/**
- * @swagger
- * /reservations:
- *   post:
- *     summary: Create a reservation
- *     description: Creates a new reservation for a listing. Total price is calculated server-side based on price_per_hour and the selected time window.
- *     tags: [Reservations]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [listing_id, start_time, end_time]
- *             properties:
- *               listing_id:
- *                 type: string
- *                 format: uuid
- *               start_time:
- *                 type: string
- *                 format: date-time
- *               end_time:
- *                 type: string
- *                 format: date-time
- *               vehicle_id:
- *                 type: string
- *                 format: uuid
- *                 nullable: true
- *     responses:
- *       201:
- *         description: Reservation created successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Reservation'
- *       400:
- *         description: Missing or invalid fields (e.g. end_time not after start_time)
- *       401:
- *         description: Unauthorized
- *       404:
- *         description: Listing not found or unavailable
- */
+// ─── Create reservation (guest) ───────────────────────────────────────────────
 router.post("/", requireAuth, async (req, res) => {
-  const { end_time, listing_id, start_time, vehicle_id } = req.body as {
+  const { end_time, listing_id, payment_method_id, start_time, vehicle_id } = req.body as {
     end_time?: string;
     listing_id?: string;
+    payment_method_id?: string;
     start_time?: string;
     vehicle_id?: string;
   };
@@ -220,6 +124,16 @@ router.post("/", requireAuth, async (req, res) => {
 
   if (!listing_id || !start_time || !end_time) {
     res.status(400).json({ error: "Missing required fields: listing_id, start_time, end_time" });
+    return;
+  }
+
+  if (!vehicle_id) {
+    res.status(400).json({ error: "A vehicle is required to make a reservation" });
+    return;
+  }
+
+  if (!payment_method_id) {
+    res.status(400).json({ error: "A payment method is required to make a reservation" });
     return;
   }
 
@@ -236,6 +150,23 @@ router.post("/", requireAuth, async (req, res) => {
     return;
   }
 
+  // Validate vehicle ownership
+  const { data: vehicle } = await supabase.from("vehicles").select("id").eq("id", vehicle_id).eq("user_id", userId).maybeSingle();
+
+  if (!vehicle) {
+    res.status(404).json({ error: "Vehicle not found" });
+    return;
+  }
+
+  // Validate payment method ownership and get Stripe details
+  const { data: paymentMethod } = await supabase.from("payment_methods").select("id, stripe_payment_method_id").eq("id", payment_method_id).eq("user_id", userId).maybeSingle();
+
+  if (!paymentMethod) {
+    res.status(404).json({ error: "Payment method not found" });
+    return;
+  }
+
+  // Get listing
   const { data: listing, error: listingError }: PostgrestSingleResponse<IListing> = await supabase.from("listings").select("*").eq("id", listing_id).eq("is_active", true).single();
 
   if (listingError || !listing) {
@@ -246,61 +177,193 @@ router.post("/", requireAuth, async (req, res) => {
   const durationHours = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60);
   const totalPrice = Number((listing.price_per_hour * durationHours).toFixed(2));
 
+  // Get or create Stripe customer for this user
+  const { data: userData } = await supabase.from("users").select("stripe_customer_id, email").eq("id", userId).single();
+
+  let customerId = userData?.stripe_customer_id as string | undefined;
+  if (!customerId) {
+    const customer = await stripe.customers.create({
+      email: userData?.email as string | undefined,
+      metadata: { supabase_user_id: userId },
+    });
+    customerId = customer.id;
+    await supabase.from("users").update({ stripe_customer_id: customerId }).eq("id", userId);
+  }
+
+  // Authorize (but don't capture) the payment
+  let paymentIntentId: null | string;
+  try {
+    paymentIntentId = (
+      await stripe.paymentIntents.create({
+        amount: Math.max(50, Math.round(totalPrice * 100)), // Stripe minimum is $0.50
+        capture_method: "manual",
+        confirm: true,
+        currency: "usd",
+        customer: customerId,
+        off_session: true,
+        payment_method: paymentMethod.stripe_payment_method_id as string,
+      })
+    ).id;
+  } catch (stripeError: unknown) {
+    const msg = stripeError instanceof Error ? stripeError.message : "Payment authorization failed";
+    res.status(402).json({ error: msg });
+    return;
+  }
+
   const { data: reservation, error } = await supabase
     .from("reservations")
     .insert({
+      approval_status: "pending",
       end_time,
       listing_id,
+      payment_intent_id: paymentIntentId,
+      payment_method_id,
       start_time,
       total_price: totalPrice,
       user_id: userId,
-      ...(vehicle_id ? { vehicle_id } : {}),
+      vehicle_id,
     })
     .select("*, listing:listings(*)")
     .single();
 
   if (error) {
+    // Cancel the payment intent if DB insert fails
+    if (paymentIntentId) {
+      await stripe.paymentIntents.cancel(paymentIntentId).catch(() => null);
+    }
     res.status(500).json({ error: "Failed to create reservation" });
     return;
   }
 
-  res.status(201).json({
-    ...(reservation as IReservation),
-    status: computeStatus(start_time, end_time),
-  });
+  res.status(201).json(enrichReservation(reservation as IReservation));
 });
 
-/**
- * @swagger
- * /reservations/{id}/renew:
- *   post:
- *     summary: Renew a reservation
- *     description: Extends an active reservation by its original duration. The reservation must currently be active or have ended within the last 30 minutes. A new total_price is calculated and added to the existing total.
- *     tags: [Reservations]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: The reservation UUID
- *     responses:
- *       200:
- *         description: Reservation renewed successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Reservation'
- *       400:
- *         description: Reservation is not eligible for renewal (expired beyond grace period or listing unavailable)
- *       401:
- *         description: Unauthorized
- *       404:
- *         description: Reservation not found
- */
+// ─── Host: approve reservation ────────────────────────────────────────────────
+router.patch("/:id/approve", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user!.id;
+
+  const { data: reservation } = await supabase.from("reservations").select("*, listing:listings(host_id)").eq("id", id).maybeSingle();
+
+  if (!reservation) {
+    res.status(404).json({ error: "Reservation not found" });
+    return;
+  }
+
+  if ((reservation.listing as { host_id: string })?.host_id !== userId) {
+    res.status(403).json({ error: "Only the listing host can approve this reservation" });
+    return;
+  }
+
+  if (reservation.approval_status !== "pending") {
+    res.status(400).json({ error: `Reservation is already ${reservation.approval_status as string}` });
+    return;
+  }
+
+  // Capture the authorized Stripe payment
+  if (reservation.payment_intent_id) {
+    try {
+      await stripe.paymentIntents.capture(reservation.payment_intent_id as string);
+    } catch (stripeError: unknown) {
+      const msg = stripeError instanceof Error ? stripeError.message : "Payment capture failed";
+      console.error("PATCH /approve Stripe capture error:", msg);
+      res.status(402).json({ error: msg });
+      return;
+    }
+  }
+
+  const { data: updated, error } = await supabase.from("reservations").update({ approval_status: "approved", updated_at: new Date().toISOString() }).eq("id", id).select("*, listing:listings(*)").single();
+
+  if (error) {
+    console.error("PATCH /approve DB error:", error.message);
+    res.status(500).json({ detail: error.message, error: "Failed to approve reservation" });
+    return;
+  }
+
+  res.status(200).json(enrichReservation(updated as IReservation));
+});
+
+// ─── Host: reject reservation ─────────────────────────────────────────────────
+router.patch("/:id/reject", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user!.id;
+
+  const { data: reservation } = await supabase.from("reservations").select("*, listing:listings(host_id)").eq("id", id).maybeSingle();
+
+  if (!reservation) {
+    res.status(404).json({ error: "Reservation not found" });
+    return;
+  }
+
+  if ((reservation.listing as { host_id: string })?.host_id !== userId) {
+    res.status(403).json({ error: "Only the listing host can reject this reservation" });
+    return;
+  }
+
+  if (reservation.approval_status !== "pending") {
+    res.status(400).json({ error: `Reservation is already ${reservation.approval_status as string}` });
+    return;
+  }
+
+  // Cancel the Stripe authorization — no charge
+  if (reservation.payment_intent_id) {
+    try {
+      await stripe.paymentIntents.cancel(reservation.payment_intent_id as string);
+    } catch {
+      // Non-fatal — continue even if cancel fails (intent may already be cancelled)
+    }
+  }
+
+  const { data: updated, error } = await supabase.from("reservations").update({ approval_status: "rejected", updated_at: new Date().toISOString() }).eq("id", id).select("*, listing:listings(*)").single();
+
+  if (error) {
+    console.error("PATCH /reject DB error:", error.message);
+    res.status(500).json({ detail: error.message, error: "Failed to reject reservation" });
+    return;
+  }
+
+  res.status(200).json(enrichReservation(updated as IReservation));
+});
+
+// ─── Guest: cancel reservation ────────────────────────────────────────────────
+router.patch("/:id/cancel", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user!.id;
+
+  const { data: reservation } = await supabase.from("reservations").select("approval_status, payment_intent_id, user_id").eq("id", id).maybeSingle();
+
+  if (reservation?.user_id !== userId) {
+    res.status(404).json({ error: "Reservation not found" });
+    return;
+  }
+
+  if (reservation.approval_status === "cancelled") {
+    res.status(400).json({ error: "Reservation is already cancelled" });
+    return;
+  }
+
+  if (reservation.payment_intent_id) {
+    try {
+      const intent = await stripe.paymentIntents.retrieve(reservation.payment_intent_id as string);
+      if (intent.status === "requires_capture") {
+        await stripe.paymentIntents.cancel(reservation.payment_intent_id as string);
+      }
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  const { data: updated, error } = await supabase.from("reservations").update({ approval_status: "cancelled", updated_at: new Date().toISOString() }).eq("id", id).select("*, listing:listings(*)").single();
+
+  if (error) {
+    res.status(500).json({ error: "Failed to cancel reservation" });
+    return;
+  }
+
+  res.status(200).json(enrichReservation(updated as IReservation));
+});
+
+// ─── Renew reservation ────────────────────────────────────────────────────────
 router.post("/:id/renew", requireAuth, async (req, res) => {
   const { id } = req.params;
   const userId = req.user!.id;
@@ -314,7 +377,7 @@ router.post("/:id/renew", requireAuth, async (req, res) => {
 
   const now = new Date();
   const endTime = new Date(reservation.end_time);
-  const gracePeriodMs = 30 * 60 * 1000; // 30 minutes
+  const gracePeriodMs = 30 * 60 * 1000;
 
   if (now > new Date(endTime.getTime() + gracePeriodMs)) {
     res.status(400).json({ error: "Reservation has expired and is no longer eligible for renewal" });
@@ -328,7 +391,6 @@ router.post("/:id/renew", requireAuth, async (req, res) => {
 
   const originalDurationMs = new Date(reservation.end_time).getTime() - new Date(reservation.start_time).getTime();
   const newEndTime = new Date(endTime.getTime() + originalDurationMs);
-
   const additionalHours = originalDurationMs / (1000 * 60 * 60);
   const additionalPrice = Number((reservation.listing.price_per_hour * additionalHours).toFixed(2));
   const newTotalPrice = Number((reservation.total_price + additionalPrice).toFixed(2));
@@ -349,10 +411,7 @@ router.post("/:id/renew", requireAuth, async (req, res) => {
     return;
   }
 
-  res.status(200).json({
-    ...(updated as IReservation),
-    status: computeStatus((updated as IReservation).start_time, (updated as IReservation).end_time),
-  });
+  res.status(200).json(enrichReservation(updated as IReservation));
 });
 
 export default router;
