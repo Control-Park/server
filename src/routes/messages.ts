@@ -43,19 +43,30 @@ const router = Router();
  */
 router.post("/", requireAuth, async (req, res) => {
   const userId = req.user!.id;
-  const { host_id, listing_id } = req.body as { host_id?: string; listing_id?: string };
+  const { guest_id, host_id, listing_id } = req.body as { guest_id?: string; host_id?: string; listing_id?: string };
 
   if (!host_id || !listing_id) {
     res.status(400).json({ error: "Missing required fields: host_id, listing_id" });
     return;
   }
 
-  if (host_id === userId) {
+  // If caller is the host initiating, they supply guest_id explicitly.
+  // Otherwise default to caller as guest.
+  const resolvedGuestId = guest_id ?? userId;
+  const resolvedHostId = host_id;
+
+  if (resolvedGuestId === resolvedHostId) {
     res.status(400).json({ error: "You cannot message yourself" });
     return;
   }
 
-  const { data, error } = await supabase.from("conversations").upsert({ guest_id: userId, host_id, listing_id }, { ignoreDuplicates: false, onConflict: "guest_id,host_id,listing_id" }).select().single();
+  // Caller must be one of the participants
+  if (userId !== resolvedGuestId && userId !== resolvedHostId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const { data, error } = await supabase.from("conversations").upsert({ guest_id: resolvedGuestId, host_id: resolvedHostId, listing_id }, { ignoreDuplicates: false, onConflict: "guest_id,host_id,listing_id" }).select().single();
 
   if (error) {
     res.status(500).json({ error: "Failed to get or create conversation" });

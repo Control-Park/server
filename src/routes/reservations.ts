@@ -141,6 +141,26 @@ router.get("/:id", requireAuth, async (req, res) => {
   res.status(200).json(enrichReservation(data));
 });
 
+// ─── Host: view single reservation on own listing ────────────────────────────
+router.get("/:id/for-host", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user!.id;
+
+  const { data, error } = await supabase.from("reservations").select("*, listing:listings(*), guest:users!reservations_user_id_fkey(id, first_name, last_name, email)").eq("id", id).single();
+
+  if (error || !data) {
+    res.status(404).json({ error: "Reservation not found" });
+    return;
+  }
+
+  if ((data.listing as IListing)?.host_id !== userId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  res.status(200).json(enrichReservation(data as IReservation));
+});
+
 // ─── Create reservation (guest) ───────────────────────────────────────────────
 router.post("/", requireAuth, async (req, res) => {
   const { end_time, listing_id, payment_method_id, start_time, vehicle_id } = req.body as {
