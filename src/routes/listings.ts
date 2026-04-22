@@ -458,6 +458,80 @@ router.get("/:id", async (req, res) => {
  *       404:
  *         description: Listing not found
  */
+router.patch("/:id", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const hostId = req.user!.id;
+
+  const { data: existing } = await supabase.from("listings").select("id").eq("id", id).eq("host_id", hostId).maybeSingle();
+
+  if (!existing) {
+    res.status(404).json({ error: "Listing not found" });
+    return;
+  }
+
+  const { address, amenities, available_from, available_until, description, images, incentives, is_active, is_guest_favorite, is_popular, original_price, parking_type, perks, price_per_hour, rating, review_count, structure_name, sub_heading, title } = req.body as Partial<IListing>;
+
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (title !== undefined) updates.title = title;
+  if (description !== undefined) updates.description = description;
+  if (address !== undefined) updates.address = address;
+  if (price_per_hour !== undefined) updates.price_per_hour = price_per_hour;
+  if (is_active !== undefined) updates.is_active = is_active;
+  if (parking_type !== undefined) updates.parking_type = parking_type;
+  if (amenities !== undefined) updates.amenities = amenities;
+  if (perks !== undefined) updates.perks = perks;
+  if (incentives !== undefined) updates.incentives = incentives;
+  if (images !== undefined) updates.images = images;
+  if (structure_name !== undefined) updates.structure_name = structure_name;
+  if (sub_heading !== undefined) updates.sub_heading = sub_heading;
+  if (available_from !== undefined) updates.available_from = available_from;
+  if (available_until !== undefined) updates.available_until = available_until;
+  if (is_guest_favorite !== undefined) updates.is_guest_favorite = is_guest_favorite;
+  if (is_popular !== undefined) updates.is_popular = is_popular;
+  if (original_price !== undefined) updates.original_price = original_price;
+  if (rating !== undefined) updates.rating = rating;
+  if (review_count !== undefined) updates.review_count = review_count;
+
+  const { data: updated, error } = await supabase.from("listings").update(updates).eq("id", id).select().single();
+
+  if (error) {
+    console.error("PATCH /listings/:id error:", error.message);
+    res.status(500).json({ error: "Failed to update listing" });
+    return;
+  }
+
+  res.status(200).json(updated as IListing);
+});
+
+router.delete("/:id", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const hostId = req.user!.id;
+
+  const { data: existing } = await supabase.from("listings").select("id").eq("id", id).eq("host_id", hostId).maybeSingle();
+
+  if (!existing) {
+    res.status(404).json({ error: "Listing not found" });
+    return;
+  }
+
+  const { data: activeReservations } = await supabase.from("reservations").select("id").eq("listing_id", id).in("approval_status", ["pending", "approved"]).limit(1);
+
+  if (activeReservations && activeReservations.length > 0) {
+    res.status(409).json({ error: "Cannot delete a listing with active or pending reservations" });
+    return;
+  }
+
+  const { error } = await supabase.from("listings").update({ is_active: false, updated_at: new Date().toISOString() }).eq("id", id);
+
+  if (error) {
+    console.error("DELETE /listings/:id error:", error.message);
+    res.status(500).json({ error: "Failed to delete listing" });
+    return;
+  }
+
+  res.status(200).json({ message: "Listing deleted" });
+});
+
 router.post("/:id/report", requireAuth, async (req, res) => {
   const { id } = req.params;
   const { description, reason } = req.body as { description?: string; reason?: string };

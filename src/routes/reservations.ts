@@ -96,6 +96,36 @@ router.get("/hosting", requireAuth, async (req, res) => {
   res.status(200).json(reservations);
 });
 
+// ─── Host: earnings stats ─────────────────────────────────────────────────────
+router.get("/host/stats", requireAuth, async (req, res) => {
+  const userId = req.user!.id;
+
+  const { data: listings } = await supabase.from("listings").select("id").eq("host_id", userId);
+
+  if (!listings || listings.length === 0) {
+    res.status(200).json({ completed_bookings: 0, wallet_balance: 0 });
+    return;
+  }
+
+  const listingIds = listings.map((l) => l.id as string);
+
+  const { data: reservations } = await supabase.from("reservations").select("total_price, end_time").in("listing_id", listingIds).eq("approval_status", "approved");
+
+  const now = new Date();
+  let walletBalance = 0;
+  let completedBookings = 0;
+
+  for (const r of reservations ?? []) {
+    walletBalance += Number(r.total_price ?? 0);
+    if (new Date(r.end_time as string) < now) completedBookings++;
+  }
+
+  res.status(200).json({
+    completed_bookings: completedBookings,
+    wallet_balance: Number(walletBalance.toFixed(2)),
+  });
+});
+
 // ─── Get single reservation ───────────────────────────────────────────────────
 router.get("/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
