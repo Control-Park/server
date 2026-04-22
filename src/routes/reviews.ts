@@ -45,16 +45,24 @@ router.get("/mine/pending", requireAuth, async (req, res) => {
   // Completed as guest: approved reservations by caller where end_time < now
   const { data: guestRes } = await supabase.from("reservations").select("*, listing:listings(id, title)").eq("user_id", userId).eq("approval_status", "approved").lt("end_time", new Date().toISOString());
 
-  // Which ones already reviewed by caller
+  // Reviews are independent per reservation target: guest review and listing review
   const allIds = [...(hostRes ?? []).map((r: { id: string }) => r.id), ...(guestRes ?? []).map((r: { id: string }) => r.id)];
 
-  const { data: doneReviews } = allIds.length ? await supabase.from("reviews").select("reservation_id").eq("reviewer_id", userId).in("reservation_id", allIds) : { data: [] };
+  const { data: doneReviews } = allIds.length ? await supabase.from("reviews").select("reservation_id, target_user_id, target_listing_id").eq("reviewer_id", userId).in("reservation_id", allIds) : { data: [] };
 
-  const reviewedIds = new Set((doneReviews ?? []).map((rv: { reservation_id: string }) => rv.reservation_id));
+  const reviewedGuestKeys = new Set((doneReviews ?? []).filter((rv: { target_user_id?: null | string }) => !!rv.target_user_id).map((rv: { reservation_id: string; target_user_id: string }) => `${rv.reservation_id}:guest:${rv.target_user_id}`));
 
-  const pendingHost = (hostRes ?? []).filter((r: { id: string }) => !reviewedIds.has(r.id)).map((r: Record<string, unknown>) => ({ ...r, role: "host" }));
+  const reviewedListingKeys = new Set((doneReviews ?? []).filter((rv: { target_listing_id?: null | string }) => !!rv.target_listing_id).map((rv: { reservation_id: string; target_listing_id: string }) => `${rv.reservation_id}:listing:${rv.target_listing_id}`));
 
-  const pendingGuest = (guestRes ?? []).filter((r: { id: string }) => !reviewedIds.has(r.id)).map((r: Record<string, unknown>) => ({ ...r, role: "guest" }));
+  const pendingHost = (hostRes ?? [])
+    .filter((r: { guest?: { id?: string }; id: string }) => {
+      const guestId = r.guest?.id;
+      if (!guestId) return false;
+      return !reviewedGuestKeys.has(`${r.id}:guest:${guestId}`);
+    })
+    .map((r: Record<string, unknown>) => ({ ...r, role: "host" }));
+
+  const pendingGuest = (guestRes ?? []).filter((r: { id: string; listing_id: string }) => !reviewedListingKeys.has(`${r.id}:listing:${r.listing_id}`)).map((r: Record<string, unknown>) => ({ ...r, role: "guest" }));
 
   res.status(200).json([...pendingHost, ...pendingGuest]);
 });
@@ -74,14 +82,56 @@ router.post("/", requireAuth, async (req, res) => {
     res.status(400).json({ error: "reservation_id and rating required" });
     return;
   }
-  if (!target_user_id && !target_listing_id) {
-    res.status(400).json({ error: "target_user_id or target_listing_id required" });
+
+  const targetCount = Number(!!target_user_id) + Number(!!target_listing_id);
+  if (targetCount !== 1) {
+    res.status(400).json({ error: "Provide exactly one review target" });
     return;
+  }
+
+  const { data: reservation, error: reservationError } = await supabase.from("reservations").select("id, user_id, listing_id, listing:listings(host_id)").eq("id", reservation_id).single();
+
+  if (reservationError || !reservation) {
+    res.status(404).json({ error: "Reservation not found" });
+    return;
+  }
+
+  const listingHostId = (reservation.listing as null | { host_id?: string })?.host_id;
+  const guestUserId = reservation.user_id as string;
+  const listingId = reservation.listing_id as string;
+
+  if (target_user_id) {
+    if (target_user_id === reviewerId) {
+      res.status(400).json({ error: "You cannot review yourself" });
+      return;
+    }
+
+    if (reviewerId !== listingHostId || target_user_id !== guestUserId) {
+      res.status(403).json({ error: "Invalid guest review target" });
+      return;
+    }
+  }
+
+  if (target_listing_id) {
+    if (listingHostId === reviewerId) {
+      res.status(400).json({ error: "You cannot review your own listing" });
+      return;
+    }
+
+    if (reviewerId !== guestUserId || target_listing_id !== listingId) {
+      res.status(403).json({ error: "Invalid listing review target" });
+      return;
+    }
   }
 
   const { data, error } = await supabase.from("reviews").insert({ comment, rating, reservation_id, reviewer_id: reviewerId, target_listing_id, target_user_id }).select().single();
 
   if (error) {
+    if (error.code === "23505") {
+      res.status(409).json({ error: "You have already submitted this review" });
+      return;
+    }
+
     res.status(400).json({ error: error.message });
     return;
   }
