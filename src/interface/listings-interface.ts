@@ -14,6 +14,7 @@ export interface IListing {
   images: string[];
   incentives: string[];
   is_active: boolean;
+  is_draft?: boolean;
   is_guest_favorite: boolean;
   is_popular: boolean;
   original_price?: number;

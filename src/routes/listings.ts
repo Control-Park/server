@@ -534,7 +534,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
     return;
   }
 
-  const { address, amenities, available_from, available_until, description, images, incentives, is_active, is_guest_favorite, is_popular, original_price, parking_type, perks, price_per_hour, rating, review_count, structure_name, sub_heading, title } = req.body as Partial<IListing>;
+  const { address, amenities, available_from, available_until, description, images, incentives, is_active, is_draft, is_guest_favorite, is_popular, original_price, parking_type, perks, price_per_hour, rating, review_count, structure_name, sub_heading, title } = req.body as Partial<IListing>;
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (title !== undefined) updates.title = title;
@@ -542,6 +542,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
   if (address !== undefined) updates.address = address;
   if (price_per_hour !== undefined) updates.price_per_hour = price_per_hour;
   if (is_active !== undefined) updates.is_active = is_active;
+  if (is_draft !== undefined) updates.is_draft = is_draft;
   if (parking_type !== undefined) updates.parking_type = parking_type;
   if (amenities !== undefined) updates.amenities = amenities;
   if (perks !== undefined) updates.perks = perks;
@@ -572,7 +573,7 @@ router.delete("/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
   const hostId = req.user!.id;
 
-  const { data: existing } = await supabase.from("listings").select("id").eq("id", id).eq("host_id", hostId).maybeSingle();
+  const { data: existing } = await supabase.from("listings").select("id, is_active").eq("id", id).eq("host_id", hostId).maybeSingle();
 
   if (!existing) {
     res.status(404).json({ error: "Listing not found" });
@@ -581,12 +582,12 @@ router.delete("/:id", requireAuth, async (req, res) => {
 
   const { data: activeReservations } = await supabase.from("reservations").select("id").eq("listing_id", id).in("approval_status", ["pending", "approved"]).limit(1);
 
-  if (activeReservations && activeReservations.length > 0) {
+  if (existing.is_active && activeReservations && activeReservations.length > 0) {
     res.status(409).json({ error: "Cannot delete a listing with active or pending reservations" });
     return;
   }
 
-  const { error } = await supabase.from("listings").update({ is_active: false, updated_at: new Date().toISOString() }).eq("id", id);
+  const { error } = await supabase.from("listings").delete().eq("id", id);
 
   if (error) {
     console.error("DELETE /listings/:id error:", error.message);
