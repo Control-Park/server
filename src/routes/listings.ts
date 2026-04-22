@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-condition */
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { supabase } from "#database/supabase.js";
@@ -384,6 +385,70 @@ router.post("/", requireAuth, async (req, res) => {
  *       404:
  *         description: Listing not found
  */
+// ─── Host: all own listings (active + inactive + draft) ──────────────────────
+router.get("/mine", requireAuth, async (req, res) => {
+  const hostId = req.user!.id;
+
+  const { data, error } = await supabase.from("listings").select("*").eq("host_id", hostId).order("created_at", { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: "Failed to fetch listings" });
+    return;
+  }
+
+  res.status(200).json(data ?? []);
+});
+
+// ─── Host: save listing as draft ─────────────────────────────────────────────
+router.post("/draft", requireAuth, async (req, res) => {
+  const hostId = req.user!.id;
+  const { address, description, images, incentives, parking_type, perks, price_per_hour, structure_name, sub_heading, title } = req.body as {
+    address?: string;
+    description?: string;
+    images?: string[];
+    incentives?: string[];
+    parking_type?: string;
+    perks?: string[];
+    price_per_hour?: number;
+    structure_name?: string;
+    sub_heading?: string[];
+    title?: string;
+  };
+
+  if (!title?.trim()) {
+    res.status(400).json({ error: "title is required to save as draft" });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("listings")
+    .insert({
+      address: address ? address.trim() : "",
+      amenities: [],
+      description: description ? description.trim() : null,
+      host_id: hostId,
+      images: images ?? [],
+      incentives: incentives ?? [],
+      is_active: false,
+      is_draft: true,
+      parking_type: parking_type ?? "Lot",
+      perks: perks ?? [],
+      price_per_hour: price_per_hour ?? 0,
+      structure_name: structure_name ?? null,
+      sub_heading: sub_heading ?? [],
+      title: title.trim(),
+    })
+    .select()
+    .single();
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.status(201).json(data);
+});
+
 router.get("/:id", async (req, res) => {
   const { id } = req.params;
 
