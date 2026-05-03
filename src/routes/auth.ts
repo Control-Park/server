@@ -9,6 +9,30 @@ import type { PostgrestSingleResponse } from "@supabase/supabase-js";
 
 const router = Router();
 
+const USER_PROFILE_SELECT = `
+  id,
+  email,
+  first_name,
+  last_name,
+  preferred_name,
+  phone,
+  birth_date,
+  role,
+  host,
+  host_display_name,
+  bio,
+  address_line1,
+  address_line2,
+  address_city,
+  address_state,
+  address_postal_code,
+  address_country,
+  expo_push_token,
+  stripe_customer_id,
+  created_at,
+  updated_at
+`;
+
 /**
  * @swagger
  * components:
@@ -39,6 +63,8 @@ const router = Router();
  *         host:
  *           type: boolean
  *         host_display_name:
+ *           type: string
+ *         bio:
  *           type: string
  *         created_at:
  *           type: string
@@ -75,9 +101,10 @@ const router = Router();
 router.get("/user/:id", async (req, res) => {
   const { id } = req.params;
 
-  const { data, error }: PostgrestSingleResponse<IUser> = await supabase.from("users").select("*").eq("id", id).single();
+  const { data, error }: PostgrestSingleResponse<IUser> = await supabase.from("users").select(USER_PROFILE_SELECT).eq("id", id).single();
 
   if (error) {
+    console.error("[auth/user/:id] profile fetch error:", error);
     res.status(404).json({ error: "User not found" });
     return;
   }
@@ -119,9 +146,10 @@ router.get("/user", async (req, res) => {
     return;
   }
 
-  const { data, error }: PostgrestSingleResponse<IUser> = await supabase.from("users").select("*").eq("email", email).single();
+  const { data, error }: PostgrestSingleResponse<IUser> = await supabase.from("users").select(USER_PROFILE_SELECT).eq("email", email).single();
 
   if (error) {
+    console.error("[auth/user] profile fetch error:", error);
     res.status(404).json({ error: "User not found" });
     return;
   }
@@ -485,9 +513,10 @@ router.post("/reset-password", async (req, res) => {
  *         description: Unauthorized
  */
 router.get("/me", requireAuth, async (req, res) => {
-  const { data, error }: PostgrestSingleResponse<IUser> = await supabase.from("users").select("*").eq("id", req.user!.id).single();
+  const { data, error }: PostgrestSingleResponse<IUser> = await supabase.from("users").select(USER_PROFILE_SELECT).eq("id", req.user!.id).single();
 
   if (error) {
+    console.error("[auth/me] profile fetch error:", error);
     res.status(404).json({ error: "User not found" });
     return;
   }
@@ -520,6 +549,8 @@ router.get("/me", requireAuth, async (req, res) => {
  *                 type: string
  *               host_display_name:
  *                 type: string
+ *               bio:
+ *                 type: string
  *               address_line1:
  *                 type: string
  *               address_line2:
@@ -539,9 +570,10 @@ router.get("/me", requireAuth, async (req, res) => {
  *         description: Unauthorized
  */
 router.patch("/me", requireAuth, async (req, res) => {
-  const { address_city, address_country, address_line1, address_line2, address_postal_code, address_state, first_name, host_display_name, last_name, phone, preferred_name } = req.body as Partial<IUser>;
+  const { address_city, address_country, address_line1, address_line2, address_postal_code, address_state, bio, first_name, host_display_name, last_name, phone, preferred_name } = req.body as Partial<IUser>;
 
   const updates: Partial<IUser> = {};
+
   if (first_name !== undefined) updates.first_name = first_name;
   if (last_name !== undefined) updates.last_name = last_name;
   if (preferred_name !== undefined) updates.preferred_name = preferred_name;
@@ -551,17 +583,21 @@ router.patch("/me", requireAuth, async (req, res) => {
   if (address_line2 !== undefined) updates.address_line2 = address_line2;
   if (address_city !== undefined) updates.address_city = address_city;
   if (address_state !== undefined) updates.address_state = address_state;
-  if (address_postal_code !== undefined) updates.address_postal_code = address_postal_code;
+  if (address_postal_code !== undefined) {
+    updates.address_postal_code = address_postal_code;
+  }
   if (address_country !== undefined) updates.address_country = address_country;
+  if (bio !== undefined) updates.bio = bio;
 
   if (Object.keys(updates).length === 0) {
     res.status(400).json({ error: "No fields to update" });
     return;
   }
 
-  const { data, error }: PostgrestSingleResponse<IUser> = await supabase.from("users").update(updates).eq("id", req.user!.id).select().single();
+  const { data, error }: PostgrestSingleResponse<IUser> = await supabase.from("users").update(updates).eq("id", req.user!.id).select(USER_PROFILE_SELECT).single();
 
   if (error) {
+    console.error("[auth/me] profile update error:", error);
     res.status(500).json({ error: "Failed to update profile" });
     return;
   }

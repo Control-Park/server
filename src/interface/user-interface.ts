@@ -10,6 +10,7 @@ export interface IUser {
   address_line2?: null | string;
   address_postal_code?: null | string;
   address_state?: null | string;
+  bio: null | string;
   birth_date: Date;
   created_at: Date;
   email: string;
