@@ -145,6 +145,56 @@ router.get("/", requireAuth, async (req, res) => {
 
 /**
  * @swagger
+ * /conversations:
+ *   delete:
+ *     summary: Delete all conversations for the authenticated user
+ *     description: Deletes every conversation where the authenticated user is either the guest or host. Messages are removed by cascade.
+ *     tags: [Messages]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Conversations deleted
+ *       401:
+ *         description: Unauthorized
+ */
+router.delete("/", requireAuth, async (req, res) => {
+  const userId = req.user!.id;
+
+  const { data: conversations, error: fetchError } = await supabase.from("conversations").select("id").or(`guest_id.eq.${userId},host_id.eq.${userId}`);
+
+  if (fetchError) {
+    console.error("[conversations] fetch before delete all error:", fetchError);
+    res.status(500).json({ error: "Failed to delete conversations" });
+    return;
+  }
+
+  const conversationIds = (conversations ?? []).map((conversation) => conversation.id as string);
+
+  if (conversationIds.length === 0) {
+    res.status(200).json({
+      deleted_conversation_count: 0,
+      message: "No conversations to delete",
+    });
+    return;
+  }
+
+  const { data, error } = await supabase.from("conversations").delete().in("id", conversationIds).select("id");
+
+  if (error) {
+    console.error("[conversations] delete all error:", error);
+    res.status(500).json({ error: "Failed to delete conversations" });
+    return;
+  }
+
+  res.status(200).json({
+    deleted_conversation_count: data?.length ?? 0,
+    message: "Conversations deleted successfully",
+  });
+});
+
+/**
+ * @swagger
  * /conversations/{id}/messages:
  *   get:
  *     summary: Get messages for a conversation
@@ -270,6 +320,68 @@ router.post("/:id/messages", requireAuth, async (req, res) => {
   });
 
   res.status(201).json(message as IMessage);
+});
+
+/**
+ * @swagger
+ * /conversations/{id}:
+ *   delete:
+ *     summary: Delete a conversation
+ *     description: Deletes a conversation if the authenticated user is a participant. Messages are removed by cascade.
+ *     tags: [Messages]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Conversation deleted
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Not a participant in this conversation
+ *       404:
+ *         description: Conversation not found
+ */
+router.delete("/:id", requireAuth, async (req, res) => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const { data: conversation, error: findError } = await supabase.from("conversations").select("guest_id, host_id").eq("id", id).maybeSingle();
+
+  if (findError) {
+    console.error("[conversations/:id] lookup before delete error:", findError);
+    res.status(500).json({ error: "Failed to delete conversation" });
+    return;
+  }
+
+  if (!conversation) {
+    res.status(404).json({ error: "Conversation not found" });
+    return;
+  }
+
+  if (conversation.guest_id !== userId && conversation.host_id !== userId) {
+    res.status(403).json({ error: "Not a participant in this conversation" });
+    return;
+  }
+
+  const { error } = await supabase.from("conversations").delete().eq("id", id);
+
+  if (error) {
+    console.error("[conversations/:id] delete error:", error);
+    res.status(500).json({ error: "Failed to delete conversation" });
+    return;
+  }
+
+  res.status(200).json({
+    conversation_id: id,
+    message: "Conversation deleted successfully",
+  });
 });
 
 export default router;
