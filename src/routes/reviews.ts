@@ -7,6 +7,39 @@ import { Router } from "express";
 
 const router = Router();
 
+async function updateListingReviewStats(listingId: string): Promise<{ id: string; rating: null | number; review_count: number }> {
+  const { data: reviews, error: reviewsError } = await supabase.from("reviews").select("rating").eq("target_listing_id", listingId);
+
+  if (reviewsError) {
+    throw new Error(reviewsError.message);
+  }
+
+  const ratings = (reviews ?? []).map((review) => Number(review.rating));
+  const reviewCount = ratings.length;
+  const rating = reviewCount > 0 ? Number((ratings.reduce((sum, value) => sum + value, 0) / reviewCount).toFixed(2)) : null;
+
+  const { data: listing, error: listingError } = await supabase
+    .from("listings")
+    .update({
+      rating,
+      review_count: reviewCount,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", listingId)
+    .select("id, rating, review_count")
+    .single();
+
+  if (listingError) {
+    throw new Error(listingError.message);
+  }
+
+  return {
+    id: listing.id as string,
+    rating: listing.rating === null ? null : Number(listing.rating),
+    review_count: Number(listing.review_count),
+  };
+}
+
 // GET /reviews/user/:userId — all reviews targeting a user (guest reviews)
 router.get("/user/:userId", requireAuth, async (req, res) => {
   const { userId } = req.params;
@@ -78,8 +111,13 @@ router.post("/", requireAuth, async (req, res) => {
     target_user_id?: string;
   };
 
-  if (!reservation_id || !rating) {
+  if (!reservation_id || rating === undefined) {
     res.status(400).json({ error: "reservation_id and rating required" });
+    return;
+  }
+
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    res.status(400).json({ error: "rating must be an integer from 1 to 5" });
     return;
   }
 
@@ -89,10 +127,15 @@ router.post("/", requireAuth, async (req, res) => {
     return;
   }
 
-  const { data: reservation, error: reservationError } = await supabase.from("reservations").select("id, user_id, listing_id, listing:listings(host_id)").eq("id", reservation_id).single();
+  const { data: reservation, error: reservationError } = await supabase.from("reservations").select("id, user_id, listing_id, approval_status, end_time, listing:listings(host_id)").eq("id", reservation_id).single();
 
   if (reservationError || !reservation) {
     res.status(404).json({ error: "Reservation not found" });
+    return;
+  }
+
+  if (reservation.approval_status !== "approved" || new Date(reservation.end_time as string) > new Date()) {
+    res.status(400).json({ error: "Only completed approved reservations can be reviewed" });
     return;
   }
 
@@ -124,7 +167,11 @@ router.post("/", requireAuth, async (req, res) => {
     }
   }
 
-  const { data, error } = await supabase.from("reviews").insert({ comment, rating, reservation_id, reviewer_id: reviewerId, target_listing_id, target_user_id }).select().single();
+  const { data, error } = await supabase
+    .from("reviews")
+    .insert({ comment: comment?.trim() ? comment.trim() : null, rating, reservation_id, reviewer_id: reviewerId, target_listing_id, target_user_id })
+    .select()
+    .single();
 
   if (error) {
     if (error.code === "23505") {
@@ -136,7 +183,23 @@ router.post("/", requireAuth, async (req, res) => {
     return;
   }
 
-  res.status(201).json(data);
+  if (!target_listing_id) {
+    res.status(201).json(data);
+    return;
+  }
+
+  try {
+    const listing = await updateListingReviewStats(target_listing_id);
+    res.status(201).json({
+      ...data,
+      listing,
+      listing_rating: listing.rating,
+      listing_review_count: listing.review_count,
+    });
+  } catch (statsError) {
+    console.error("[reviews] listing stats update error:", statsError);
+    res.status(201).json(data);
+  }
 });
 
 export default router;

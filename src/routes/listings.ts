@@ -7,9 +7,147 @@ import { ReportReason } from "#enum/report-reason.js";
 import { IListingReport } from "#interface/listing-report-interface.js";
 import { IListing } from "#interface/listings-interface.js";
 import { requireAuth } from "#middleware/auth.js";
-import { Router } from "express";
+import { Request, Response, Router } from "express";
 
 const router = Router();
+
+async function createListing(req: Request, res: Response, isDraft: boolean): Promise<void> {
+  const body = req.body as Record<string, unknown>;
+  const { available_from, available_until, host_name, host_type, is_guest_favorite, is_popular } = body as {
+    available_from?: string;
+    available_until?: string;
+    host_name?: string;
+    host_type?: string;
+    is_guest_favorite?: boolean;
+    is_popular?: boolean;
+  };
+  const address = getStringField(body, ["address", "streetAddress"]);
+  const amenities = getStringArrayField(body, ["amenities"]);
+  const description = getStringField(body, ["description", "details"]);
+  const images = getStringArrayField(body, ["images", "image", "photo", "photos"]);
+  const incentives = getStringArrayField(body, ["incentives"]);
+  const original_price = getNumberFieldFromAny(body, ["original_price", "originalPrice"]);
+  const parking_type = normalizeParkingType(getStringField(body, ["parking_type", "parkingType"]));
+  const perks = getStringArrayField(body, ["perks"]);
+  const price_per_hour = getNumberFieldFromAny(body, ["price_per_hour", "pricePerHour", "price", "hourlyRate", "rate"]);
+  const structure_name = getStringField(body, ["structure_name", "structureName", "campus_lot", "campusLot", "campus_lot_location", "campusLotLocation", "campusLotOrLocation", "location"]);
+  const sub_heading = getStringArrayField(body, ["sub_heading", "subHeading", "access_details", "accessDetails", "entry_details", "entryDetails", "access_entry_details", "accessEntryDetails"]);
+  const title = getStringField(body, ["title", "listingTitle"]);
+  const hostId = req.user!.id;
+
+  if (!title) {
+    res.status(400).json({ error: "title is required" });
+    return;
+  }
+
+  if (!isDraft && (!description || !address || price_per_hour === undefined)) {
+    res.status(400).json({ error: "Missing required fields: title, description, address, price_per_hour" });
+    return;
+  }
+
+  if (price_per_hour !== undefined && price_per_hour < 0) {
+    res.status(400).json({ error: "price_per_hour must be a non-negative number" });
+    return;
+  }
+
+  const { data: listing, error } = await supabase
+    .from("listings")
+    .insert({
+      address: address ?? "",
+      amenities: amenities ?? [],
+      available_from: available_from ?? null,
+      available_until: available_until ?? null,
+      description: description ?? "",
+      host_id: hostId,
+      host_name: host_name ?? null,
+      host_type: host_type ?? null,
+      images: images ?? [],
+      incentives: incentives ?? [],
+      is_active: !isDraft,
+      is_draft: isDraft,
+      is_guest_favorite: is_guest_favorite ?? false,
+      is_popular: is_popular ?? false,
+      original_price: original_price ?? null,
+      parking_type,
+      perks: perks ?? [],
+      price_per_hour: price_per_hour ?? 0,
+      rating: null,
+      review_count: 0,
+      structure_name: structure_name ?? null,
+      sub_heading: sub_heading ?? [],
+      title,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error(isDraft ? "POST /listings/draft error:" : "POST /listings error:", error);
+    res.status(500).json({ details: error.message, error: isDraft ? "Failed to save draft" : "Failed to create listing" });
+    return;
+  }
+
+  res.status(201).json(listing as IListing);
+}
+
+function getNumberField(body: Record<string, unknown>, fieldName: string): number | undefined {
+  const value = body[fieldName];
+
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+
+  return undefined;
+}
+
+function getNumberFieldFromAny(body: Record<string, unknown>, fieldNames: string[]): number | undefined {
+  for (const fieldName of fieldNames) {
+    const value = getNumberField(body, fieldName);
+    if (value !== undefined) return value;
+  }
+
+  return undefined;
+}
+
+function getStringArrayField(body: Record<string, unknown>, fieldNames: string[]): string[] | undefined {
+  for (const fieldName of fieldNames) {
+    const value = body[fieldName];
+
+    if (Array.isArray(value)) {
+      const values = value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (values.length > 0) return values;
+    }
+
+    if (typeof value === "string" && value.trim()) {
+      return value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return undefined;
+}
+
+function getStringField(body: Record<string, unknown>, fieldNames: string[]): string | undefined {
+  for (const fieldName of fieldNames) {
+    const value = body[fieldName];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeParkingType(value?: string): ParkingType {
+  const parkingType = Object.values(ParkingType).find((type) => type.toLowerCase() === value?.toLowerCase());
+  return parkingType ?? ParkingType.Lot;
+}
 
 /**
  * @swagger
@@ -281,80 +419,11 @@ router.get("/", async (req, res) => {
  *         description: Unauthorized
  */
 router.post("/", requireAuth, async (req, res) => {
-  const { address, amenities, available_from, available_until, description, host_name, host_type, images, incentives, is_guest_favorite, is_popular, original_price, parking_type, perks, price_per_hour, rating, review_count, structure_name, sub_heading, title } = req.body as {
-    address?: string;
-    amenities?: string[];
-    available_from?: string;
-    available_until?: string;
-    description?: string;
-    host_name?: string;
-    host_type?: string;
-    images?: string[];
-    incentives?: string[];
-    is_guest_favorite?: boolean;
-    is_popular?: boolean;
-    original_price?: number;
-    parking_type?: string;
-    perks?: string[];
-    price_per_hour?: number;
-    rating?: number;
-    review_count?: number;
-    structure_name?: string;
-    sub_heading?: string[];
-    title?: string;
-  };
-  const hostId = req.user!.id;
+  await createListing(req, res, false);
+});
 
-  if (!title || !description || !address || !parking_type || price_per_hour === undefined) {
-    res.status(400).json({ error: "Missing required fields: title, description, address, parking_type, price_per_hour" });
-    return;
-  }
-
-  const validParkingTypes = Object.values(ParkingType) as string[];
-  if (!validParkingTypes.includes(parking_type)) {
-    res.status(400).json({ error: `Invalid parking_type. Must be one of: ${validParkingTypes.join(", ")}` });
-    return;
-  }
-
-  if (typeof price_per_hour !== "number" || price_per_hour < 0) {
-    res.status(400).json({ error: "price_per_hour must be a non-negative number" });
-    return;
-  }
-
-  const { data: listing, error } = await supabase
-    .from("listings")
-    .insert({
-      address,
-      amenities: amenities ?? [],
-      available_from: available_from ?? null,
-      available_until: available_until ?? null,
-      description,
-      host_id: hostId,
-      host_name: host_name ?? null,
-      host_type: host_type ?? null,
-      images: images ?? [],
-      incentives: incentives ?? [],
-      is_guest_favorite: is_guest_favorite ?? false,
-      is_popular: is_popular ?? false,
-      original_price: original_price ?? null,
-      parking_type,
-      perks: perks ?? [],
-      price_per_hour,
-      rating: rating ?? null,
-      review_count: review_count ?? 0,
-      structure_name: structure_name ?? null,
-      sub_heading: sub_heading ?? [],
-      title,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    res.status(500).json({ error: "Failed to create listing" });
-    return;
-  }
-
-  res.status(201).json(listing as IListing);
+router.post("/create", requireAuth, async (req, res) => {
+  await createListing(req, res, false);
 });
 
 /**
@@ -401,52 +470,15 @@ router.get("/mine", requireAuth, async (req, res) => {
 
 // ─── Host: save listing as draft ─────────────────────────────────────────────
 router.post("/draft", requireAuth, async (req, res) => {
-  const hostId = req.user!.id;
-  const { address, description, images, incentives, parking_type, perks, price_per_hour, structure_name, sub_heading, title } = req.body as {
-    address?: string;
-    description?: string;
-    images?: string[];
-    incentives?: string[];
-    parking_type?: string;
-    perks?: string[];
-    price_per_hour?: number;
-    structure_name?: string;
-    sub_heading?: string[];
-    title?: string;
-  };
+  await createListing(req, res, true);
+});
 
-  if (!title?.trim()) {
-    res.status(400).json({ error: "title is required to save as draft" });
-    return;
-  }
+router.post("/save-draft", requireAuth, async (req, res) => {
+  await createListing(req, res, true);
+});
 
-  const { data, error } = await supabase
-    .from("listings")
-    .insert({
-      address: address ? address.trim() : "",
-      amenities: [],
-      description: description ? description.trim() : null,
-      host_id: hostId,
-      images: images ?? [],
-      incentives: incentives ?? [],
-      is_active: false,
-      is_draft: true,
-      parking_type: parking_type ?? "Lot",
-      perks: perks ?? [],
-      price_per_hour: price_per_hour ?? 0,
-      structure_name: structure_name ?? null,
-      sub_heading: sub_heading ?? [],
-      title: title.trim(),
-    })
-    .select()
-    .single();
-
-  if (error) {
-    res.status(500).json({ error: error.message });
-    return;
-  }
-
-  res.status(201).json(data);
+router.post("/drafts", requireAuth, async (req, res) => {
+  await createListing(req, res, true);
 });
 
 router.get("/:id", async (req, res) => {
@@ -534,7 +566,20 @@ router.patch("/:id", requireAuth, async (req, res) => {
     return;
   }
 
-  const { address, amenities, available_from, available_until, description, images, incentives, is_active, is_draft, is_guest_favorite, is_popular, original_price, parking_type, perks, price_per_hour, rating, review_count, structure_name, sub_heading, title } = req.body as Partial<IListing>;
+  const body = req.body as Record<string, unknown>;
+  const { available_from, available_until, is_active, is_draft, is_guest_favorite, is_popular } = body as Partial<IListing>;
+  const address = getStringField(body, ["address", "streetAddress"]);
+  const amenities = getStringArrayField(body, ["amenities"]);
+  const description = getStringField(body, ["description", "details"]);
+  const images = getStringArrayField(body, ["images", "image", "photo", "photos"]);
+  const incentives = getStringArrayField(body, ["incentives"]);
+  const original_price = getNumberFieldFromAny(body, ["original_price", "originalPrice"]);
+  const parking_type = body.parking_type !== undefined || body.parkingType !== undefined ? normalizeParkingType(getStringField(body, ["parking_type", "parkingType"])) : undefined;
+  const perks = getStringArrayField(body, ["perks"]);
+  const price_per_hour = getNumberFieldFromAny(body, ["price_per_hour", "pricePerHour", "price", "hourlyRate", "rate"]);
+  const structure_name = getStringField(body, ["structure_name", "structureName", "campus_lot", "campusLot", "campus_lot_location", "campusLotLocation", "campusLotOrLocation", "location"]);
+  const sub_heading = getStringArrayField(body, ["sub_heading", "subHeading", "access_details", "accessDetails", "entry_details", "entryDetails", "access_entry_details", "accessEntryDetails"]);
+  const title = getStringField(body, ["title", "listingTitle"]);
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (title !== undefined) updates.title = title;
@@ -555,8 +600,6 @@ router.patch("/:id", requireAuth, async (req, res) => {
   if (is_guest_favorite !== undefined) updates.is_guest_favorite = is_guest_favorite;
   if (is_popular !== undefined) updates.is_popular = is_popular;
   if (original_price !== undefined) updates.original_price = original_price;
-  if (rating !== undefined) updates.rating = rating;
-  if (review_count !== undefined) updates.review_count = review_count;
 
   const { data: updated, error } = await supabase.from("listings").update(updates).eq("id", id).select().single();
 

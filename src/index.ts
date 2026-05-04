@@ -22,6 +22,7 @@ const port = process.env.PORT ?? "9001";
 
 app.use(cors({ origin: process.env.CORS_ORIGIN ?? "*" }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use("/auth", authRouter);
 app.use("/listings", listingsRouter);
 app.use("/notifications", notificationsRouter);
