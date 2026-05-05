@@ -327,7 +327,34 @@ router.get("/", async (req, res) => {
     return;
   }
 
-  res.status(200).json({ listings });
+  const resolvedListings = (listings ?? []) as IListing[];
+  let savedListingIds = new Set<string>();
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ") && resolvedListings.length > 0) {
+    const token = authHeader.slice(7);
+    const { data: userData } = await supabase.auth.getUser(token);
+
+    if (userData.user) {
+      const listingIds = resolvedListings.map((listing) => listing.id);
+
+      const { data: savedListings, error: savedError } = await supabase.from("saved_listings").select("listing_id").eq("user_id", userData.user.id).in("listing_id", listingIds);
+
+      if (savedError) {
+        res.status(500).json({ error: "Unable to fetch listings" });
+        return;
+      }
+
+      savedListingIds = new Set((savedListings ?? []).map((savedListing) => savedListing.listing_id as string));
+    }
+  }
+
+  res.status(200).json({
+    listings: resolvedListings.map((listing) => ({
+      ...listing,
+      is_saved: savedListingIds.has(listing.id),
+    })),
+  });
 });
 
 /**

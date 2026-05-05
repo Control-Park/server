@@ -9,6 +9,7 @@ import { ReservationStatus } from "#enum/reservation-status.js";
 import { IListing } from "#interface/listings-interface.js";
 import { IReservation } from "#interface/reservation-interface.js";
 import { requireAuth } from "#middleware/auth.js";
+import { dispatchNotification } from "#utils/dispatchNotification.js";
 import { Router } from "express";
 import Stripe from "stripe";
 
@@ -285,6 +286,26 @@ router.post("/", requireAuth, async (req, res) => {
     return;
   }
 
+  const guestName = [req.user?.user_metadata?.first_name, req.user?.user_metadata?.last_name]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .trim();
+
+  const notificationBody = guestName ? `${guestName} requested to book ${listing.title}.` : `You have a new booking request for ${listing.title}.`;
+
+  await dispatchNotification({
+    authHeader: req.headers.authorization,
+    body: notificationBody,
+    extraPayload: {
+      kind: "booking_request",
+      listingId: listing.id,
+      reservationId: reservation.id,
+    },
+    title: "New booking request",
+    type: "parking_alert",
+    userId: listing.host_id,
+  });
+
   res.status(201).json(enrichReservation(reservation as IReservation));
 });
 
@@ -330,6 +351,20 @@ router.patch("/:id/approve", requireAuth, async (req, res) => {
     return;
   }
 
+  const listingTitle = (updated.listing as IListing | undefined)?.title ?? "your reservation";
+  await dispatchNotification({
+    authHeader: req.headers.authorization,
+    body: `Your booking request for ${listingTitle} was approved.`,
+    extraPayload: {
+      kind: "reservation_approved",
+      listingId: updated.listing_id,
+      reservationId: updated.id,
+    },
+    title: "Booking approved",
+    type: "parking_alert",
+    userId: updated.user_id,
+  });
+
   res.status(200).json(enrichReservation(updated as IReservation));
 });
 
@@ -371,6 +406,20 @@ router.patch("/:id/reject", requireAuth, async (req, res) => {
     res.status(500).json({ detail: error.message, error: "Failed to reject reservation" });
     return;
   }
+
+  const listingTitle = (updated.listing as IListing | undefined)?.title ?? "your reservation";
+  await dispatchNotification({
+    authHeader: req.headers.authorization,
+    body: `Your booking request for ${listingTitle} was rejected.`,
+    extraPayload: {
+      kind: "reservation_rejected",
+      listingId: updated.listing_id,
+      reservationId: updated.id,
+    },
+    title: "Booking rejected",
+    type: "parking_alert",
+    userId: updated.user_id,
+  });
 
   res.status(200).json(enrichReservation(updated as IReservation));
 });

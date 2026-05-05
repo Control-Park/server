@@ -5,7 +5,7 @@
 import { supabase } from "#database/supabase.js";
 import { IConversation, IMessage } from "#interface/message-interface.js";
 import { requireAuth } from "#middleware/auth.js";
-import { sendToUser } from "#websocket/wsManager.js";
+import { dispatchNotification } from "#utils/dispatchNotification.js";
 import { Router } from "express";
 
 const router = Router();
@@ -312,11 +312,24 @@ router.post("/:id/messages", requireAuth, async (req, res) => {
 
   // Push real-time event to the recipient
   const recipientId = conversation.guest_id === userId ? conversation.host_id : conversation.guest_id;
-  sendToUser(recipientId as string, {
-    body: body.trim(),
-    conversationId: id,
-    senderId: userId,
+
+  const { data: sender } = await supabase.from("users").select("first_name, last_name").eq("id", userId).maybeSingle();
+
+  const senderName = sender ? `${sender.first_name as string} ${sender.last_name as string}`.trim() : "Someone";
+  const notificationTitle = `New message from ${senderName}`;
+  const notificationBody = body.trim();
+
+  await dispatchNotification({
+    authHeader: req.headers.authorization,
+    body: notificationBody,
+    extraPayload: {
+      conversationId: id,
+      senderId: userId,
+      title: notificationTitle,
+    },
+    title: notificationTitle,
     type: "new_message",
+    userId: recipientId as string,
   });
 
   res.status(201).json(message as IMessage);

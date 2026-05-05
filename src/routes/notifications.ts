@@ -3,10 +3,11 @@
 import { supabase } from "#database/supabase.js";
 import { INotification, INotificationSettings } from "#interface/notification-interface.js";
 import { requireAuth } from "#middleware/auth.js";
-import { sendToUser } from "#websocket/wsManager.js";
+import { dispatchNotification } from "#utils/dispatchNotification.js";
 import { Router } from "express";
 
 const router = Router();
+type NotificationType = "new_listing" | "new_message" | "parking_alert" | "reservation_reminder";
 
 /**
  * @swagger
@@ -60,7 +61,11 @@ const router = Router();
  *           format: date-time
  */
 
-const VALID_TYPES = ["new_listing", "new_message", "parking_alert", "reservation_reminder"];
+const VALID_TYPES: NotificationType[] = ["new_listing", "new_message", "parking_alert", "reservation_reminder"];
+
+function isNotificationType(value: string): value is NotificationType {
+  return (VALID_TYPES as string[]).includes(value);
+}
 
 /**
  * @swagger
@@ -126,33 +131,19 @@ router.post("/", requireAuth, async (req, res) => {
     return;
   }
 
-  if (!VALID_TYPES.includes(type)) {
+  if (!isNotificationType(type)) {
     res.status(400).json({ error: `Invalid type. Must be one of: ${VALID_TYPES.join(", ")}` });
     return;
   }
 
-  const supabaseUrl = process.env.NODE_ENV === "development" ? "http://127.0.0.1:54321" : process.env.SUPABASE_URL!;
-
-  // Forward the caller's user JWT so the Edge Function can verify it with Supabase auth
-  const callerToken = req.headers.authorization!;
-
-  const edgeRes = await fetch(`${supabaseUrl}/functions/v1/send-notification`, {
-    body: JSON.stringify({ body, title, type, user_id }),
-    headers: {
-      Authorization: callerToken,
-      "Content-Type": "application/json",
-    },
-    method: "POST",
+  const result = await dispatchNotification({
+    authHeader: req.headers.authorization,
+    body,
+    title,
+    type,
+    userId: user_id,
   });
-
-  const data = await edgeRes.json();
-
-  // Push to any connected WebSocket sessions for this user
-  if (edgeRes.status === 201) {
-    sendToUser(user_id, { body, title, type });
-  }
-
-  res.status(edgeRes.status).json(data);
+  res.status(result.status).json(result.data);
 });
 
 /**
