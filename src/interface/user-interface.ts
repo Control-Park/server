@@ -22,6 +22,7 @@ export interface IUser {
   listings: IListing[];
   phone: string;
   preferred_name?: string;
+  profile_image: null | string;
   reservations: IReservation[];
   role: UserRole;
   updated_at: Date;

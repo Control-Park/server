@@ -21,6 +21,7 @@ const USER_PROFILE_SELECT = `
   host,
   host_display_name,
   bio,
+  profile_image,
   address_line1,
   address_line2,
   address_city,
@@ -65,6 +66,8 @@ const USER_PROFILE_SELECT = `
  *         host_display_name:
  *           type: string
  *         bio:
+ *           type: string
+ *         profile_image:
  *           type: string
  *         created_at:
  *           type: string
@@ -551,6 +554,8 @@ router.get("/me", requireAuth, async (req, res) => {
  *                 type: string
  *               bio:
  *                 type: string
+ *               profile_image:
+ *                 type: string
  *               address_line1:
  *                 type: string
  *               address_line2:
@@ -570,7 +575,7 @@ router.get("/me", requireAuth, async (req, res) => {
  *         description: Unauthorized
  */
 router.patch("/me", requireAuth, async (req, res) => {
-  const { address_city, address_country, address_line1, address_line2, address_postal_code, address_state, bio, first_name, host_display_name, last_name, phone, preferred_name } = req.body as Partial<IUser>;
+  const { address_city, address_country, address_line1, address_line2, address_postal_code, address_state, bio, first_name, host_display_name, last_name, phone, preferred_name, profile_image } = req.body as Partial<IUser>;
 
   const updates: Partial<IUser> = {};
 
@@ -588,6 +593,7 @@ router.patch("/me", requireAuth, async (req, res) => {
   }
   if (address_country !== undefined) updates.address_country = address_country;
   if (bio !== undefined) updates.bio = bio;
+  if (profile_image !== undefined) updates.profile_image = profile_image;
 
   if (Object.keys(updates).length === 0) {
     res.status(400).json({ error: "No fields to update" });
