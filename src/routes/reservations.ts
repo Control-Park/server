@@ -314,19 +314,24 @@ router.patch("/:id/approve", requireAuth, async (req, res) => {
   const { id } = req.params;
   const userId = req.user!.id;
 
-  const { data: reservation } = await supabase.from("reservations").select("*, listing:listings(host_id)").eq("id", id).maybeSingle();
+  const { data: reservation } = await supabase.from("reservations").select("*, listing:listings(*)").eq("id", id).maybeSingle();
 
   if (!reservation) {
     res.status(404).json({ error: "Reservation not found" });
     return;
   }
 
-  if ((reservation.listing as { host_id: string })?.host_id !== userId) {
+  if ((reservation.listing as IListing | undefined)?.host_id !== userId) {
     res.status(403).json({ error: "Only the listing host can approve this reservation" });
     return;
   }
 
   if (reservation.approval_status !== "pending") {
+    if (reservation.approval_status === "approved") {
+      res.status(200).json(enrichReservation(reservation as IReservation));
+      return;
+    }
+
     res.status(400).json({ error: `Reservation is already ${reservation.approval_status as string}` });
     return;
   }
@@ -334,7 +339,14 @@ router.patch("/:id/approve", requireAuth, async (req, res) => {
   // Capture the authorized Stripe payment
   if (reservation.payment_intent_id) {
     try {
-      await stripe.paymentIntents.capture(reservation.payment_intent_id as string);
+      const intent = await stripe.paymentIntents.retrieve(reservation.payment_intent_id as string);
+
+      if (intent.status === "requires_capture") {
+        await stripe.paymentIntents.capture(reservation.payment_intent_id as string);
+      } else if (intent.status !== "succeeded") {
+        res.status(402).json({ error: `Payment cannot be captured while it is ${intent.status}` });
+        return;
+      }
     } catch (stripeError: unknown) {
       const msg = stripeError instanceof Error ? stripeError.message : "Payment capture failed";
       console.error("PATCH /approve Stripe capture error:", msg);
@@ -343,11 +355,12 @@ router.patch("/:id/approve", requireAuth, async (req, res) => {
     }
   }
 
-  const { data: updated, error } = await supabase.from("reservations").update({ approval_status: "approved", updated_at: new Date().toISOString() }).eq("id", id).select("*, listing:listings(*)").single();
+  const { data: updated, error } = await supabase.from("reservations").update({ approval_status: "approved", updated_at: new Date().toISOString() }).eq("id", id).select("*, listing:listings(*)").maybeSingle();
 
-  if (error) {
-    console.error("PATCH /approve DB error:", error.message);
-    res.status(500).json({ detail: error.message, error: "Failed to approve reservation" });
+  if (error || !updated) {
+    const detail = error?.message ?? "Reservation update returned no rows";
+    console.error("PATCH /approve DB error:", detail);
+    res.status(500).json({ detail, error: "Failed to approve reservation" });
     return;
   }
 
@@ -373,19 +386,24 @@ router.patch("/:id/reject", requireAuth, async (req, res) => {
   const { id } = req.params;
   const userId = req.user!.id;
 
-  const { data: reservation } = await supabase.from("reservations").select("*, listing:listings(host_id)").eq("id", id).maybeSingle();
+  const { data: reservation } = await supabase.from("reservations").select("*, listing:listings(*)").eq("id", id).maybeSingle();
 
   if (!reservation) {
     res.status(404).json({ error: "Reservation not found" });
     return;
   }
 
-  if ((reservation.listing as { host_id: string })?.host_id !== userId) {
+  if ((reservation.listing as IListing | undefined)?.host_id !== userId) {
     res.status(403).json({ error: "Only the listing host can reject this reservation" });
     return;
   }
 
   if (reservation.approval_status !== "pending") {
+    if (reservation.approval_status === "rejected") {
+      res.status(200).json(enrichReservation(reservation as IReservation));
+      return;
+    }
+
     res.status(400).json({ error: `Reservation is already ${reservation.approval_status as string}` });
     return;
   }
@@ -393,17 +411,21 @@ router.patch("/:id/reject", requireAuth, async (req, res) => {
   // Cancel the Stripe authorization — no charge
   if (reservation.payment_intent_id) {
     try {
-      await stripe.paymentIntents.cancel(reservation.payment_intent_id as string);
+      const intent = await stripe.paymentIntents.retrieve(reservation.payment_intent_id as string);
+      if (intent.status === "requires_capture") {
+        await stripe.paymentIntents.cancel(reservation.payment_intent_id as string);
+      }
     } catch {
       // Non-fatal — continue even if cancel fails (intent may already be cancelled)
     }
   }
 
-  const { data: updated, error } = await supabase.from("reservations").update({ approval_status: "rejected", updated_at: new Date().toISOString() }).eq("id", id).select("*, listing:listings(*)").single();
+  const { data: updated, error } = await supabase.from("reservations").update({ approval_status: "rejected", updated_at: new Date().toISOString() }).eq("id", id).select("*, listing:listings(*)").maybeSingle();
 
-  if (error) {
-    console.error("PATCH /reject DB error:", error.message);
-    res.status(500).json({ detail: error.message, error: "Failed to reject reservation" });
+  if (error || !updated) {
+    const detail = error?.message ?? "Reservation update returned no rows";
+    console.error("PATCH /reject DB error:", detail);
+    res.status(500).json({ detail, error: "Failed to reject reservation" });
     return;
   }
 

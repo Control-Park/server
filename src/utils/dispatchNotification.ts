@@ -1,3 +1,7 @@
+import type { PostgrestSingleResponse } from "@supabase/supabase-js";
+
+import { supabase } from "#database/supabase.js";
+import { INotification, INotificationSettings } from "#interface/notification-interface.js";
 import { sendToUser } from "#websocket/wsManager.js";
 
 interface DispatchNotificationArgs {
@@ -5,7 +9,7 @@ interface DispatchNotificationArgs {
   body: string;
   extraPayload?: Record<string, unknown>;
   title: string;
-  type: "new_listing" | "new_message" | "parking_alert" | "reservation_reminder";
+  type: NotificationType;
   userId: string;
 }
 
@@ -14,58 +18,54 @@ interface DispatchNotificationResult {
   status: number;
 }
 
+type NotificationSettingColumn = "new_listing" | "new_message" | "parking_alerts" | "reservation_reminders";
+type NotificationType = INotification["type"];
+
 export async function dispatchNotification({ authHeader, body, extraPayload, title, type, userId }: DispatchNotificationArgs): Promise<DispatchNotificationResult> {
-  if (!authHeader) {
-    sendToUser(userId, { body, title, type, ...extraPayload });
+  const { data: settings }: PostgrestSingleResponse<INotificationSettings | null> = await supabase.from("notification_settings").select("*").eq("user_id", userId).maybeSingle();
+  const typeSettingColumn = getTypeSettingColumn(type);
+
+  if (settings && (!settings.all_notifications || !settings[typeSettingColumn])) {
     return {
-      data: { body, title, type, user_id: userId },
+      data: { message: "Notification suppressed by user settings" },
+      status: 200,
+    };
+  }
+
+  const { data, error }: PostgrestSingleResponse<INotification> = await supabase.from("notifications").insert({ body, title, type, user_id: userId }).select().single();
+
+  if (!error) {
+    sendToUser(userId, { ...toNotificationPayload(data), ...extraPayload });
+    return {
+      data,
       status: 201,
     };
   }
 
-  const supabaseUrl = process.env.NODE_ENV === "development" ? "http://127.0.0.1:54321" : process.env.SUPABASE_URL;
-
-  if (!supabaseUrl) {
-    throw new Error("SUPABASE_URL is required");
-  }
-
-  try {
-    const edgeRes = await fetch(`${supabaseUrl}/functions/v1/send-notification`, {
-      body: JSON.stringify({
-        body,
-        title,
-        type,
-        user_id: userId,
-      }),
-      headers: {
-        Authorization: authHeader,
-        "Content-Type": "application/json",
-      },
-      method: "POST",
-    });
-
-    let data: unknown = null;
-    try {
-      data = await edgeRes.json();
-    } catch {
-      data = { message: "Notification edge function returned a non-JSON response" };
-    }
-
-    // Keep the in-app realtime experience responsive even if push delivery/storage
-    // has issues upstream. The websocket event is what drives the toast + screen refresh.
-    sendToUser(userId, { body, title, type, ...extraPayload });
-
-    return {
-      data,
-      status: edgeRes.status,
-    };
-  } catch (error) {
-    console.error("[notifications] edge function dispatch failed:", error);
-  }
-
+  console.error("[notifications] database dispatch failed:", error);
+  // Keep the in-app realtime experience responsive even if persistence fails.
+  void authHeader;
   sendToUser(userId, { body, title, type, ...extraPayload });
   return {
     data: { body, title, type, user_id: userId },
     status: 201,
+  };
+}
+
+function getTypeSettingColumn(type: NotificationType): NotificationSettingColumn {
+  if (type === "parking_alert") return "parking_alerts";
+  if (type === "reservation_reminder") return "reservation_reminders";
+  return type;
+}
+
+function toNotificationPayload(notification: INotification) {
+  return {
+    body: notification.body,
+    created_at: notification.created_at,
+    id: notification.id,
+    is_read: notification.is_read,
+    title: notification.title,
+    type: notification.type,
+    user_id: notification.user_id,
   };
 }
